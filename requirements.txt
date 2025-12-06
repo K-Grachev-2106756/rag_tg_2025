@@ -17,3 +17,5 @@ transformers==4.57.3
 sentence-transformers==5.1.2
 nltk==3.9.2
 langchain-experimental==0.4.0
+sqlalchemy==2.0.44
+psycopg2-binary==2.9.11
