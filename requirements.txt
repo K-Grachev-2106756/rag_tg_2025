@@ -19,3 +19,4 @@ nltk==3.9.2
 langchain-experimental==0.4.0
 sqlalchemy==2.0.44
 psycopg2-binary==2.9.11
+qdrant-client==1.14.1
