@@ -1,10 +1,10 @@
-from data.client import pyro_source
-
-
-import argparse
-import pandas as pd
-from structlog import get_logger
 import os
+import argparse
+
+from structlog import get_logger
+import pandas as pd
+
+from parser.client import pyro_source
 
 
 BATCH_SIZE = 256
