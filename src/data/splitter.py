@@ -1,40 +1,9 @@
 from typing import Literal
 
-import torch
 from transformers import AutoTokenizer
-from sentence_transformers import SentenceTransformer
 from langchain_text_splitters import RecursiveCharacterTextSplitter, NLTKTextSplitter
 from langchain_experimental.text_splitter import SemanticChunker
-
-
-class EmbeddingWrapper:
-    """
-    Класс описывает кастомизацию langchain_core.embeddings.Embeddings 
-        для использования внутри SemanticChunker
-    """
-    
-    def __init__(self, model_name: str):
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.model = SentenceTransformer(model_name).to(self.device).eval()
-    
-
-    def embed_documents(self, texts: list[str], batch_size: int = 16) -> torch.Tensor:
-        """
-        Функция для получения векторных представлений текстов
-        """
-        all_embeds = []
-        with torch.no_grad():
-            for i in range(0, len(texts), batch_size):
-                batch = texts[i:i+batch_size]
-                emb = self.model.encode(
-                    batch, 
-                    convert_to_tensor=True, 
-                    normalize_embeddings=True,
-                )
-                all_embeds.append(emb.cpu())
-            torch.cuda.empty_cache()
-        
-        return torch.cat(all_embeds, dim=0)
+from langchain_huggingface.embeddings import HuggingFaceEmbeddings
 
 
 class Splitter:
@@ -89,7 +58,10 @@ class Splitter:
             
             case "semantic":
                 self.splitter = SemanticChunker(
-                    EmbeddingWrapper(model_name), 
+                    HuggingFaceEmbeddings(
+                        model_name=model_name, 
+                        encode_kwargs={"normalize_embeddings": True},
+                    ), 
                     **splitter_kwargs,
                 )
                 self.split_fn = self._semantic_split
