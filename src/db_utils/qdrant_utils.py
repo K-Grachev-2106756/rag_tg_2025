@@ -39,10 +39,10 @@ def qdrant_insert(df: pd.DataFrame, index_name: str) -> Any:
     points = [
         models.PointStruct(
             id=str(uuid.uuid4()),  # уникальный id чанка
-            vector=list(row["vector"]),  # вектор чанкa
+            vector=list(row.vector),  # вектор чанкa
             payload={
-                "doc_id": row["doc_id"],  # <--- связь с PostgreSQL
-                "text": row["text"],
+                "doc_id": row.doc_id,  # <--- связь с PostgreSQL
+                "text": row.text,
             },
         ) for row in df.itertuples(index=False)
     ]
