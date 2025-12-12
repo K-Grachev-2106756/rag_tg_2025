@@ -20,3 +20,10 @@ langchain-experimental==0.4.0
 sqlalchemy==2.0.44
 psycopg2-binary==2.9.11
 qdrant-client==1.14.1
+openai==1.109.1
+pydantic==2.9.2
+tenacity==9.0.0
+langchain==1.0.0
+langchain-openai==1.0.0
+langchain-core==1.0.0
+tqdm==4.67.1
