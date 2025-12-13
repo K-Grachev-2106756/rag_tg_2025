@@ -3,7 +3,7 @@ from typing import Hashable, Optional
 import pandas as pd
 from sqlalchemy import text
 
-from src.db_utils.db_clients import sql_client
+from src.config import sql_client
 
 
 def sql_drop(table: str):

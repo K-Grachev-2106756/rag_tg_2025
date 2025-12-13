@@ -4,7 +4,7 @@ from typing import Literal, Any
 import pandas as pd
 from qdrant_client import models
 
-from src.db_utils.db_clients import qdrant_client
+from src.config import qdrant_client
 
 
 def qdrant_create_index(

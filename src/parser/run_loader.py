@@ -4,7 +4,7 @@ import argparse
 from structlog import get_logger
 import pandas as pd
 
-from parser.client import pyro_source
+from src.config import pyro_source
 
 
 BATCH_SIZE = 256
@@ -54,6 +54,9 @@ def main():
 
 
     logger.info("Finished loading")
+
+
+
 
 if __name__ == "__main__":
     main()
