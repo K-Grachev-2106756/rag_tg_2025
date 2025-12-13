@@ -22,3 +22,5 @@ langchain_mistralai==1.1.1
 sqlalchemy==2.0.44
 psycopg2-binary==2.9.11
 qdrant-client==1.16.2
+fastapi==0.124.4
+uvicorn==0.38.0
