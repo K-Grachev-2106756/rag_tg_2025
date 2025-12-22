@@ -40,5 +40,5 @@ QDRANT_URL = os.getenv("QDRANT_URL")
 qdrant_client = QdrantClient(url=QDRANT_URL)
 
 # LLM
-MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY")
-MISTRAL_MODEL = os.environ.get("MISTRAL_MODEL", "mistral-small-latest")
+LLM_API_KEY = os.environ.get("OPENROUTER_API_KEY")
+LLM = "qwen/qwen3-next-80b-a3b-instruct"

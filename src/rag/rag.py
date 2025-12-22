@@ -6,7 +6,7 @@ from langchain_core.runnables import RunnablePassthrough
 
 from src.rag.retriever import Retriever
 from src.rag.llm import get_model
-from src.config import MISTRAL_API_KEY, MISTRAL_MODEL
+from src.config import LLM_API_KEY, LLM
 
 
 class LLMResponse(BaseModel):
@@ -31,7 +31,7 @@ class RAG:
                 "Вопрос:{question}"
             ),
         ])
-        self.llm = get_model(MISTRAL_API_KEY, MISTRAL_MODEL)
+        self.llm = get_model(LLM_API_KEY, LLM)
 
         self.chain = (
             {

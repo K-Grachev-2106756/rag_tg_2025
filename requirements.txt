@@ -15,10 +15,13 @@ tokenizers==0.22.1
 transformers==4.57.3
 sentence-transformers==5.1.2
 nltk==3.9.2
+langchain==1.1.0
+langchain-core==1.1.0
 langchain_text_splitters==1.0.0
 langchain-experimental==0.4.0
 langchain_huggingface==1.1.0
 langchain_mistralai==1.1.1
+langchain-openai==1.0.0
 sqlalchemy==2.0.44
 psycopg2-binary==2.9.11
 qdrant-client==1.16.2
@@ -27,7 +30,5 @@ uvicorn==0.38.0
 openai==1.109.1
 pydantic==2.9.2
 tenacity==9.0.0
-langchain==1.0.0
-langchain-openai==1.0.0
-langchain-core==1.0.0
 tqdm==4.67.1
+streamlit==1.40.2
