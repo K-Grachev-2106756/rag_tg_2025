@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 from sqlalchemy import create_engine
 
-from src.parser.pyrosource import PyroSource
+from src.data.parser import PyroSource
 
 
 load_dotenv()
@@ -12,6 +12,7 @@ load_dotenv()
 # Парсер
 API_ID = os.environ.get("TELEGRAM_API_ID")
 API_HASH = os.environ.get("TELEGRAM_API_HASH")
+CHANNEL_ID = os.environ.get("CHANNEL_ID")
 
 pyro_source = PyroSource(api_id=API_ID, api_hash=API_HASH)
 

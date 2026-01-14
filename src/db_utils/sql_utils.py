@@ -1,4 +1,4 @@
-from typing import Hashable, Optional
+from typing import Hashable, Optional, Literal
 
 import pandas as pd
 from sqlalchemy import text
@@ -14,8 +14,12 @@ def sql_drop(table: str):
         print("Ошибка:", e)
 
 
-def sql_dump_df(df: pd.DataFrame, table: str) -> Optional[int]:
-    return df.to_sql(table, sql_client, if_exists="replace", index=False)
+def sql_dump_df(
+        df: pd.DataFrame, 
+        table: str, 
+        if_exists: Literal["replace", "append"] = "append",
+    ) -> Optional[int]:
+    return df.to_sql(table, sql_client, if_exists=if_exists, index=False)
 
 
 def sql_get_table(table: str) -> pd.DataFrame:
@@ -64,5 +68,25 @@ def sql_fetch_batch(batch_size: int = 16, offset: int = 0):
 
     with sql_client.connect() as conn:
         rows = conn.execute(query, {"limit": batch_size, "offset": offset}).mappings().all()
+
+    return rows
+
+
+def sql_get_by_date(message_date: str):
+    with sql_client.connect() as conn:
+        rows = (
+            conn.execute(
+                text(
+                    """
+                    SELECT *
+                    FROM posts
+                    WHERE message_dt = :message_date
+                    """
+                ),
+                {"message_date": message_date},
+            )
+            .mappings()
+            .all()
+        )
 
     return rows

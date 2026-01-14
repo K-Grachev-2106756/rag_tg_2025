@@ -1,8 +1,5 @@
 import pandas as pd
 
-from src.db_utils.sql_utils import sql_drop, sql_dump_df
-
-
 
 def strip_edges_allow_punct(s: str):
     allowed_punct = set(".,!?;:-–—")  # можно расширять
@@ -65,20 +62,10 @@ def is_advertisement(s: str):
     return any(v in last_part for v in ["Реклама.", "Реклама,"])
 
 
+def clean_df(df: pd.DataFrame):
+    df["message_dt"] = pd.to_datetime(df["message_dt"]).dt.date
+    df["content"] = df["content"].apply(lambda x: process_str(x))
+    df["views"] = df["views"].astype(int)
+    df = df[~df["content"].apply(is_advertisement)]
 
-
-if __name__ == "__main__":
-    # Предобработка документов
-    rbc = pd.read_csv("src/dataset/rbc/channel_rbc_news_posts.csv")
-    
-    rbc["message_dt"] = pd.to_datetime(rbc["message_dt"]).dt.date
-    rbc["content"] = rbc["content"].apply(lambda x: process_str(x))
-    rbc["views"] = rbc["views"].astype(int)
-
-    rbc = rbc[~rbc["content"].apply(is_advertisement)]
-    rbc = rbc[["message_id", "channel_id", "message_dt", "views", "content"]]
-
-    # Загрузка в бд
-    table = "posts"
-    sql_drop(table)
-    sql_dump_df(rbc, table)
+    return df[["message_id", "channel_id", "message_dt", "views", "content"]]

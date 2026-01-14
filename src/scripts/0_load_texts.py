@@ -4,7 +4,7 @@ import argparse
 from structlog import get_logger
 import pandas as pd
 
-from src.config import pyro_source
+from src.config import pyro_source, CHANNEL_ID
 
 
 BATCH_SIZE = 256
@@ -21,7 +21,7 @@ def save_batch(df: pd.DataFrame, out_path: str, is_first_batch: bool):
 def main():
     parser = argparse.ArgumentParser(description="Telegram posts loader")
 
-    parser.add_argument("--channel_id", type=str, required=True)
+    parser.add_argument("--channel_id", type=str, default=CHANNEL_ID)
     parser.add_argument("--limit", type=int, required=True)
     parser.add_argument("--offset", type=int, default=0)
 
