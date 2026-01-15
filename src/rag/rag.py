@@ -3,6 +3,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.prompts.chat import SystemMessagePromptTemplate, HumanMessagePromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.runnables import RunnablePassthrough
+from langchain_core.exceptions import OutputParserException
+from pydantic import ValidationError
 
 from src.rag.retriever import Retriever
 from src.rag.llm import get_model
@@ -46,4 +48,11 @@ class RAG:
 
 
     def invoke(self, query: str):
-        return self.chain.invoke(query)
+        try:
+            return self.chain.invoke(query)
+        except (OutputParserException, ValidationError) as e:
+            return LLMResponse(
+            answer="Не знаю.",
+            reason="Модель не смогла вернуть ответ в корректном формате."
+        )
+
