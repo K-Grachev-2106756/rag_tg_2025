@@ -6,3 +6,18 @@ secondaryBackgroundColor = "#f0f2f6"
 textColor = "#262730"
 font = "sans serif"
 
+[server]
+# Important for HuggingFace Spaces
+enableCORS = false
+enableXsrfProtection = true
+maxUploadSize = 200
+headless = true
+
+[browser]
+# Prevent auto-reruns on HF Spaces
+gatherUsageStats = false
+
+[runner]
+# Optimize for production environments like HF Spaces
+magicEnabled = false
+fastReruns = true

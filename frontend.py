@@ -1,476 +1,403 @@
 """
 Streamlit Frontend для RAG вопросно-ответной системы
-История запросов управляется через Backend API
+Чат-интерфейс с поддержкой нескольких диалогов
 """
 import streamlit as st
-import requests
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
+import uuid
 
-# --- Configuration ---
-BACKEND_URL = "http://localhost:8000"
+from src import RAG
+from src.db_utils.history_utils import (
+    init_history_table,
+    log_query,
+    get_all_history,
+    get_history_by_dialogue,
+    search_history,
+    get_history_stats,
+    delete_history,
+    get_recent_dialogues
+)
+
+
+# --- Инициализация RAG ---
+@st.cache_resource(show_spinner=False)
+def get_rag():
+    """Initialize RAG once and cache it"""
+    return RAG(
+        embed_model_name = "Qwen/Qwen3-Embedding-0.6B",
+        embed_index_name = "recursive_Qwen3-Embedding-0.6B"
+    )
 
 
 # --- Session State Management ---
 def init_session_state():
-    """Initialize session state variables for dialogue support"""
-    if "current_page" not in st.session_state:
-        st.session_state.current_page = "🔍 Запрос"
+    """Initialize session state variables for chat support"""
     if "current_dialogue_id" not in st.session_state:
-        st.session_state.current_dialogue_id = generate_dialogue_id()
-    if "dialogue_messages" not in st.session_state:
-        # For future dialogue support - stores messages in current session
-        st.session_state.dialogue_messages = []
-    if "history_cache" not in st.session_state:
-        st.session_state.history_cache = None
-    if "history_cache_time" not in st.session_state:
-        st.session_state.history_cache_time = None
+        st.session_state.current_dialogue_id = None
+    if "chat_list" not in st.session_state:
+        st.session_state.chat_list = []
+    if "current_chat_messages" not in st.session_state:
+        st.session_state.current_chat_messages = []
+    if "chat_names" not in st.session_state:
+        st.session_state.chat_names = {}  # {dialogue_id: custom_name}
+    if "chats_loaded" not in st.session_state:
+        st.session_state.chats_loaded = False
 
 
 def generate_dialogue_id() -> str:
-    """Generate unique dialogue ID for future multi-turn conversation support"""
-    return f"dialogue_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    """Generate unique dialogue ID"""
+    return f"chat_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
 
 
-# --- API Communication ---
+def get_chat_display_name(dialogue_id: str, first_query: str = None) -> str:
+    """Get display name for chat"""
+    if dialogue_id in st.session_state.chat_names:
+        return st.session_state.chat_names[dialogue_id]
+    
+    if first_query:
+        # Use first 40 chars of first query as name
+        name = first_query[:40] + "..." if len(first_query) > 40 else first_query
+        st.session_state.chat_names[dialogue_id] = name
+        return name
+    
+    return "Новый диалог"
 
-def check_backend_health() -> bool:
-    """Check if backend is available"""
+
+# --- Chat Management Functions ---
+
+def load_chats_list():
+    """Load all available chats from database"""
     try:
-        response = requests.get(f"{BACKEND_URL}/health", timeout=2)
-        return response.status_code == 200
-    except:
-        return False
+        dialogues = get_recent_dialogues(limit=50)
+        st.session_state.chat_list = dialogues
+        st.session_state.chats_loaded = True
+        
+        # If no current chat selected and chats exist, select the first one
+        if not st.session_state.current_dialogue_id and dialogues:
+            switch_to_chat(dialogues[0]["dialogue_id"])
+    except Exception as e:
+        st.error(f"❌ Ошибка при загрузке чатов: {e}")
+        st.session_state.chat_list = []
 
 
-def send_query_to_backend(query: str, dialogue_id: Optional[str] = None) -> Optional[Dict]:
-    """Send query to RAG backend"""
+def create_new_chat():
+    """Create a new chat"""
+    new_id = generate_dialogue_id()
+    st.session_state.current_dialogue_id = new_id
+    st.session_state.current_chat_messages = []
+    return new_id
+
+
+def switch_to_chat(dialogue_id: str):
+    """Switch to an existing chat"""
+    st.session_state.current_dialogue_id = dialogue_id
+    load_chat_messages(dialogue_id)
+
+
+def load_chat_messages(dialogue_id: str):
+    """Load messages for a specific chat"""
     try:
-        payload = {"query": query}
-        if dialogue_id:
-            payload["dialogue_id"] = dialogue_id
-            
-        response = requests.post(
-            f"{BACKEND_URL}/rag",
-            json=payload,
-            timeout=60
+        history = get_history_by_dialogue(dialogue_id)
+        st.session_state.current_chat_messages = history
+    except Exception as e:
+        st.error(f"❌ Ошибка при загрузке сообщений: {e}")
+        st.session_state.current_chat_messages = []
+
+
+def send_message(query: str) -> Optional[Dict]:
+    """Send a message in current chat"""
+    try:
+        if not st.session_state.current_dialogue_id:
+            create_new_chat()
+        
+        # Get RAG and invoke with history
+        rag = get_rag()
+        
+        # Pass current chat history to RAG (it will use last N messages internally for enrichment)
+        result = rag.invoke(query, history=st.session_state.current_chat_messages)
+        
+        # Log to history
+        query_id = log_query(
+            query=query,
+            answer=result.get("answer", ""),
+            reason=result.get("reason", ""),
+            dialogue_id=st.session_state.current_dialogue_id
         )
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.ConnectionError:
-        st.error("❌ Не удается подключиться к backend серверу. Убедитесь, что сервер запущен на http://localhost:8000")
+        
+        result["query_id"] = query_id
+        
+        # Update current chat messages
+        load_chat_messages(st.session_state.current_dialogue_id)
+        
+        # Reload chats list to update
+        load_chats_list()
+        
+        return result
+    except Exception as e:
+        st.error(f"❌ Ошибка при отправке сообщения: {e}")
         return None
-    except requests.exceptions.Timeout:
-        st.error("⏱️ Превышено время ожидания ответа от сервера")
-        return None
-    except requests.exceptions.HTTPError as e:
-        st.error(f"❌ Ошибка HTTP: {e}")
-        return None
-    except Exception as e:
-        st.error(f"❌ Неожиданная ошибка: {e}")
-        return None
 
 
-def get_history_from_backend(limit: int = 100, offset: int = 0) -> List[Dict]:
-    """Get history from backend API"""
+def delete_chat(dialogue_id: str) -> bool:
+    """Delete a chat"""
     try:
-        response = requests.get(
-            f"{BACKEND_URL}/history",
-            params={"limit": limit, "offset": offset},
-            timeout=10
-        )
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        st.error(f"❌ Ошибка при получении истории: {e}")
-        return []
-
-
-def get_stats_from_backend() -> Dict:
-    """Get statistics from backend API"""
-    try:
-        response = requests.get(f"{BACKEND_URL}/history/stats", timeout=5)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        return {"total_queries": 0, "unique_dialogues": 0}
-
-
-def search_history_in_backend(search_text: str, limit: int = 50) -> List[Dict]:
-    """Search history via backend API"""
-    try:
-        response = requests.get(
-            f"{BACKEND_URL}/history/search",
-            params={"q": search_text, "limit": limit},
-            timeout=10
-        )
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        st.error(f"❌ Ошибка при поиске: {e}")
-        return []
-
-
-def get_dialogues_from_backend(limit: int = 10) -> List[Dict]:
-    """Get dialogues list from backend API"""
-    try:
-        response = requests.get(
-            f"{BACKEND_URL}/history/dialogues",
-            params={"limit": limit},
-            timeout=10
-        )
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        return []
-
-
-def get_dialogue_history_from_backend(dialogue_id: str) -> List[Dict]:
-    """Get specific dialogue history from backend API"""
-    try:
-        response = requests.get(
-            f"{BACKEND_URL}/history/dialogue/{dialogue_id}",
-            timeout=10
-        )
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        return []
-
-
-def delete_history_from_backend(dialogue_id: Optional[str] = None) -> bool:
-    """Delete history via backend API"""
-    try:
-        params = {}
-        if dialogue_id:
-            params["dialogue_id"] = dialogue_id
-        response = requests.delete(
-            f"{BACKEND_URL}/history",
-            params=params,
-            timeout=10
-        )
-        response.raise_for_status()
+        delete_history(dialogue_id=dialogue_id)
+        
+        # If deleted current chat, switch to another or create new
+        if st.session_state.current_dialogue_id == dialogue_id:
+            st.session_state.current_dialogue_id = None
+            st.session_state.current_chat_messages = []
+        
+        # Reload chats
+        load_chats_list()
+        
         return True
     except Exception as e:
-        st.error(f"❌ Ошибка при удалении: {e}")
+        st.error(f"❌ Ошибка при удалении чата: {e}")
         return False
 
 
-def get_cached_history(force_refresh: bool = False) -> List[Dict]:
-    """Get history with caching to reduce API calls"""
-    cache_duration = timedelta(seconds=30)
-    
-    if (force_refresh or 
-        st.session_state.history_cache is None or 
-        st.session_state.history_cache_time is None or
-        datetime.now() - st.session_state.history_cache_time > cache_duration):
-        
-        st.session_state.history_cache = get_history_from_backend(limit=500)
-        st.session_state.history_cache_time = datetime.now()
-    
-    return st.session_state.history_cache
 
 
-# --- Page: Query Interface ---
-def page_query():
-    st.title("🤖 Вопросно-ответная система RAG")
+# --- Page: Chat Interface ---
+def page_chat():
+    """Main chat interface page"""
     
-    st.markdown("---")
-    
-    # Search period settings (placeholder for future functionality)
-    st.subheader("⚙️ Настройки поиска")
-    
-    with st.expander("Период поиска информации", expanded=False):
-        st.info("⚠️ Настройка периода поиска в разработке. Пока используется весь доступный период.")
+    # Custom CSS to fix chat input at the bottom + keyboard shortcuts
+    st.markdown("""
+        <style>
+        /* Fix chat input at the bottom of main content area */
+        section[data-testid="stSidebar"] ~ div .stChatInput {
+            position: fixed;
+            bottom: 0;
+            background: white;
+            padding: 1rem;
+            z-index: 999;
+            border-top: 1px solid #e6e6e6;
+            margin-left: 0;
+        }
         
-        col1, col2 = st.columns(2)
-        with col1:
-            period_start = st.date_input(
-                "Начало периода",
-                value=datetime.now() - timedelta(days=30),
-                help="Начальная дата для поиска информации (заглушка)"
-            )
+        /* Add padding to main content to prevent overlap with fixed input */
+        .main .block-container {
+            padding-bottom: 100px;
+        }
+        
+        /* Dark mode support */
+        [data-testid="stAppViewContainer"][data-theme="dark"] section[data-testid="stSidebar"] ~ div .stChatInput {
+            background: rgb(14, 17, 23);
+            border-top: 1px solid #333;
+        }
+        
+        /* Adjust width to account for sidebar */
+        @media (min-width: 768px) {
+            section[data-testid="stSidebar"] ~ div .stChatInput {
+                left: var(--sidebar-width, 21rem);
+                right: 0;
+            }
+        }
+        
+        /* When sidebar is collapsed */
+        section[data-testid="stSidebar"][aria-expanded="false"] ~ div .stChatInput {
+            left: 0;
+        }
+        </style>
+        
+        <script>
+        // Add keyboard shortcuts support
+        document.addEventListener('DOMContentLoaded', function() {
+            // Find chat input field
+            const observer = new MutationObserver(function(mutations) {
+                const chatInput = document.querySelector('textarea[data-testid="stChatInput"]');
+                if (chatInput && !chatInput.hasAttribute('data-shortcut-attached')) {
+                    chatInput.setAttribute('data-shortcut-attached', 'true');
+                    
+                    // Add keyboard event listener
+                    chatInput.addEventListener('keydown', function(e) {
+                        // Enter (without Shift) - send message
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            // Trigger the send button
+                            const sendButton = document.querySelector('button[kind="primary"]');
+                            if (sendButton) {
+                                sendButton.click();
+                            }
+                        }
+                        // Ctrl+Enter or Cmd+Enter - send message (alternative)
+                        else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                            e.preventDefault();
+                            const sendButton = document.querySelector('button[kind="primary"]');
+                            if (sendButton) {
+                                sendButton.click();
+                            }
+                        }
+                        // Shift+Enter - new line (default behavior)
+                    });
+                }
+            });
+            
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+        });
+        </script>
+    """, unsafe_allow_html=True)
+    
+    # Check if we have a current chat
+    if not st.session_state.current_dialogue_id:
+        # Show welcome screen
+        st.title("💬 Чат с RAG системой")
+        st.markdown("---")
+        
+        col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            period_end = st.date_input(
-                "Конец периода",
-                value=datetime.now(),
-                help="Конечная дата для поиска информации (заглушка)"
-            )
+            st.info("👋 Добро пожаловать! Создайте новый чат или выберите существующий из списка слева.")
+            
+            if st.button("🆕 Начать новый чат", type="primary", use_container_width=True):
+                create_new_chat()
+                st.rerun()
+        
+        return
+    
+    # Display chat header
+    if st.session_state.current_chat_messages:
+        chat_name = get_chat_display_name(
+            st.session_state.current_dialogue_id,
+            st.session_state.current_chat_messages[0]["query"]
+        )
+    else:
+        chat_name = "Новый диалог"
+    
+    col1, col2 = st.columns([4, 1])
+    with col1:
+        st.title(f"💬 {chat_name}")
+    with col2:
+        if st.button("🗑️ Удалить чат", use_container_width=True):
+            if delete_chat(st.session_state.current_dialogue_id):
+                st.success("✅ Чат удален")
+                st.rerun()
     
     st.markdown("---")
     
-    # Query input
-    st.subheader("💬 Задайте вопрос")
+    # Chat messages container
+    if not st.session_state.current_chat_messages:
+        st.info("📝 Начните диалог, задав первый вопрос ниже")
+    else:
+        # Display all messages
+        for msg in st.session_state.current_chat_messages:
+            # User message
+            with st.chat_message("user"):
+                st.markdown(msg["query"])
+                timestamp_str = msg.get("timestamp", "")
+                try:
+                    dt = datetime.fromisoformat(timestamp_str)
+                    st.caption(f"🕐 {dt.strftime('%H:%M:%S')}")
+                except:
+                    pass
+            
+            # Assistant message
+            with st.chat_message("assistant"):
+                st.markdown(msg["answer"])
+                
+                # Show reasoning in expander
+                if msg.get("reason"):
+                    with st.expander("📝 Обоснование"):
+                        st.markdown(msg["reason"])
     
-    query = st.text_area(
-        "Ваш вопрос:",
-        height=100,
-        placeholder="Например: Какие новости были о курсе доллара на этой неделе?",
-        help="Введите ваш вопрос на русском языке"
+    # Input area - fixed at the bottom via CSS
+    query = st.chat_input(
+        "Введите ваш вопрос...",
+        key="chat_input"
     )
     
-    col1, col2, col3 = st.columns([2, 1, 1])
-    with col1:
-        submit_button = st.button("🔍 Получить ответ", type="primary", use_container_width=True)
-    with col2:
-        clear_button = st.button("🗑️ Очистить", use_container_width=True)
-    with col3:
-        new_dialogue_button = st.button("🆕 Новый диалог", use_container_width=True, 
-                                       help="Начать новый диалог (для будущей поддержки истории)")
-    
-    if clear_button:
-        st.rerun()
-    
-    if new_dialogue_button:
-        st.session_state.current_dialogue_id = generate_dialogue_id()
-        st.session_state.dialogue_messages = []
-        st.success("✅ Начат новый диалог")
-        st.rerun()
-    
-    # Process query
-    if submit_button:
-        if not query.strip():
-            st.warning("⚠️ Пожалуйста, введите вопрос")
-        else:
-            with st.spinner("🔄 Обработка вашего запроса..."):
-                result = send_query_to_backend(
-                    query=query,
-                    dialogue_id=st.session_state.current_dialogue_id
-                )
-                
-                if result:
-                    # Invalidate cache
-                    st.session_state.history_cache = None
-                    
-                    # Display result
-                    st.markdown("---")
-                    st.subheader("✅ Ответ:")
-                    
-                    # Answer in a nice card
-                    st.markdown(f"""
-                    <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; border-left: 5px solid #4CAF50;">
-                        <p style="margin: 0; font-size: 16px;">{result.get('answer', 'Ответ не получен')}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # Reasoning in expander
-                    with st.expander("📝 Обоснование ответа", expanded=False):
-                        st.markdown(result.get("reason", "Обоснование отсутствует"))
-                    
-                    # For future dialogue support
-                    st.session_state.dialogue_messages.append({
-                        "role": "user",
-                        "content": query,
-                        "timestamp": datetime.now().isoformat()
-                    })
-                    st.session_state.dialogue_messages.append({
-                        "role": "assistant",
-                        "content": result.get("answer", ""),
-                        "timestamp": datetime.now().isoformat()
-                    })
-
-# --- Page: Query History ---
-def page_history():
-    st.title("📜 История запросов")
-    
-    # Check backend availability
-    if not check_backend_health():
-        st.error("❌ Backend недоступен. Запустите сервер: `python server.py`")
-        return
-    
-    # Refresh button
-    col1, col2, col3 = st.columns([2, 1, 1])
-    with col2:
-        refresh_btn = st.button("🔄 Обновить", use_container_width=True)
-    with col3:
-        clear_btn = st.button("🗑️ Очистить всё", type="secondary", use_container_width=True)
-    
-    if refresh_btn:
-        st.session_state.history_cache = None
-    
-    # Get statistics from backend
-    stats = get_stats_from_backend()
-    
-    if stats.get("total_queries", 0) == 0:
-        st.info("📭 История запросов пуста. Задайте первый вопрос на странице 'Запрос'!")
-        return
-    
-    # Statistics
-    st.subheader("📊 Статистика")
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Всего запросов", stats.get("total_queries", 0))
-    with col2:
-        st.metric("Уникальных диалогов", stats.get("unique_dialogues", 0))
-    with col3:
-        last_time = stats.get("last_query_time")
-        if last_time:
-            try:
-                dt = datetime.fromisoformat(last_time)
-                st.metric("Последний запрос", dt.strftime("%H:%M:%S"))
-            except:
-                st.metric("Последний запрос", "—")
-        else:
-            st.metric("Последний запрос", "—")
-    with col4:
-        first_time = stats.get("first_query_time")
-        if first_time:
-            try:
-                dt = datetime.fromisoformat(first_time)
-                st.metric("Первый запрос", dt.strftime("%d.%m.%Y"))
-            except:
-                st.metric("Первый запрос", "—")
-        else:
-            st.metric("Первый запрос", "—")
-    
-    st.markdown("---")
-    
-    # Clear history with confirmation
-    if clear_btn:
-        if st.session_state.get("confirm_clear"):
-            if delete_history_from_backend():
-                st.session_state.confirm_clear = False
-                st.session_state.history_cache = None
-                st.success("✅ История очищена")
+    if query:
+        # Send message and get response
+        with st.spinner("🤔 Думаю..."):
+            result = send_message(query)
+            
+            if result:
                 st.rerun()
-        else:
-            st.session_state.confirm_clear = True
-            st.warning("⚠️ Нажмите еще раз для подтверждения удаления ВСЕЙ истории")
-    
-    # Filters
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        search_filter = st.text_input("🔍 Поиск по тексту", placeholder="Введите ключевые слова...")
-    with col2:
-        view_mode = st.selectbox("Режим", ["Все запросы", "По диалогам"], label_visibility="collapsed")
-    
-    # Get history from backend
-    if search_filter:
-        filtered_history = search_history_in_backend(search_filter, limit=100)
-    else:
-        filtered_history = get_cached_history(force_refresh=refresh_btn)
-    
-    if not filtered_history:
-        st.warning("🔍 По вашему запросу ничего не найдено")
-        return
-    
-    # View mode: All queries
-    if view_mode == "Все запросы":
-        st.subheader(f"Найдено записей: {len(filtered_history)}")
-        
-        # Display history entries
-        for entry in filtered_history:
-            timestamp_str = entry.get("timestamp", "")
-            
-            with st.container():
-                # Header with timestamp and dialogue ID
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    try:
-                        dt = datetime.fromisoformat(timestamp_str)
-                        st.markdown(f"**🕐 {dt.strftime('%Y-%m-%d %H:%M:%S')}**")
-                    except:
-                        st.markdown(f"**🕐 {timestamp_str}**")
-                with col2:
-                    dialogue_id = entry.get('dialogue_id', 'N/A')
-                    st.caption(f"ID: {dialogue_id[-12:] if len(dialogue_id) > 12 else dialogue_id}")
-                
-                # Query
-                st.markdown(f"**❓ Вопрос:**")
-                st.markdown(f"> {entry.get('query', '')}")
-                
-                # Answer in expander
-                with st.expander("💬 Ответ", expanded=False):
-                    st.markdown(entry.get('answer', ''))
-                    
-                    if entry.get('reason'):
-                        st.markdown("---")
-                        st.markdown("**📝 Обоснование:**")
-                        st.caption(entry.get('reason'))
-                    
-                    # Search period info
-                    search_period = entry.get('search_period', {})
-                    if search_period:
-                        st.markdown("---")
-                        st.caption(f"🔍 Период поиска: {search_period.get('start', 'N/A')} — {search_period.get('end', 'N/A')}")
-                
-                st.markdown("---")
-    
-    # View mode: By dialogues
-    else:
-        recent_dialogues = get_dialogues_from_backend(limit=20)
-        st.subheader(f"Диалогов: {len(recent_dialogues)}")
-        
-        for dialogue in recent_dialogues:
-            dialogue_id = dialogue.get('dialogue_id', '')
-            message_count = dialogue.get('message_count', 0)
-            started_at = dialogue.get('started_at', '')
-            
-            try:
-                dt = datetime.fromisoformat(started_at)
-                time_str = dt.strftime('%Y-%m-%d %H:%M')
-            except:
-                time_str = started_at
-            
-            with st.expander(
-                f"💬 {dialogue_id[-15:] if len(dialogue_id) > 15 else dialogue_id} | {message_count} запросов | {time_str}",
-                expanded=False
-            ):
-                # Get full dialogue history
-                dialogue_history = get_dialogue_history_from_backend(dialogue_id)
-                
-                for entry in dialogue_history:
-                    timestamp_str = entry.get("timestamp", "")
-                    try:
-                        dt = datetime.fromisoformat(timestamp_str)
-                        st.markdown(f"**🕐 {dt.strftime('%H:%M:%S')}**")
-                    except:
-                        st.markdown(f"**🕐 {timestamp_str}**")
-                    st.markdown(f"**❓ Вопрос:** {entry.get('query', '')}")
-                    answer = entry.get('answer', '')
-                    if len(answer) > 200:
-                        st.markdown(f"**💬 Ответ:** {answer[:200]}...")
-                    else:
-                        st.markdown(f"**💬 Ответ:** {answer}")
-                    st.markdown("---")
+
 
 
 # --- Main App ---
 def main():
     st.set_page_config(
-        page_title="RAG Q&A System",
-        page_icon="🤖",
+        page_title="RAG Chat System",
+        page_icon="💬",
         layout="wide",
         initial_sidebar_state="expanded"
     )
     
+    # Initialize history table on startup
+    try:
+        init_history_table()
+    except Exception as e:
+        st.error(f"⚠️ Не удалось инициализировать таблицу истории: {e}")
+    
     # Initialize session state
     init_session_state()
     
-    # Sidebar navigation
-    st.sidebar.title("🧭 Навигация")
+    # Load chats list if not loaded
+    if not st.session_state.chats_loaded:
+        load_chats_list()
     
-    if st.sidebar.button(
-        "🔍 Запрос", 
-        use_container_width=True, 
-        type="primary" if st.session_state.current_page == "🔍 Запрос" else "secondary"
-    ):
-        st.session_state.current_page = "🔍 Запрос"
-        st.rerun()
+    # Sidebar
+    with st.sidebar:
+        st.title("💬 RAG Chat")
         
-    if st.sidebar.button(
-        "📜 История", 
-        use_container_width=True, 
-        type="primary" if st.session_state.current_page == "📜 История" else "secondary"
-    ):
-        st.session_state.current_page = "📜 История"
-        st.rerun()
+        # New chat button
+        if st.button("➕ Новый чат", use_container_width=True, type="primary"):
+            create_new_chat()
+            st.rerun()
+        
+        st.markdown("---")
+        
+        # Chats list
+        st.subheader("📝 Ваши чаты")
+        
+        if not st.session_state.chat_list:
+            st.info("Нет чатов. Создайте новый!")
+        else:
+            # Display chats
+            for chat in st.session_state.chat_list:
+                dialogue_id = chat["dialogue_id"]
+                message_count = chat.get("message_count", 0)
+                started_at = chat.get("started_at", "")
+                
+                # Get chat name (only load history if chat has messages)
+                if message_count > 0:
+                    history = get_history_by_dialogue(dialogue_id)
+                    first_query = history[0]["query"] if history else None
+                else:
+                    first_query = None
+                chat_name = get_chat_display_name(dialogue_id, first_query)
+                
+                # Format time
+                try:
+                    dt = datetime.fromisoformat(started_at)
+                    time_str = dt.strftime('%d.%m %H:%M')
+                except:
+                    time_str = ""
+                
+                # Check if this is current chat
+                is_current = dialogue_id == st.session_state.current_dialogue_id
+                
+                # Format button text with chat name and metadata
+                button_text = f"{'📌' if is_current else '💬'} {chat_name}\n💬 {message_count} • {time_str}"
+                
+                if st.button(
+                    button_text,
+                    key=f"chat_{dialogue_id}",
+                    use_container_width=True,
+                    type="primary" if is_current else "secondary"
+                ):
+                    switch_to_chat(dialogue_id)
+                    st.rerun()
     
-    # Route to pages
-    if st.session_state.current_page == "🔍 Запрос":
-        page_query()
-    else:
-        page_history()
+    # Main content area
+    page_chat()
 
 
 if __name__ == "__main__":

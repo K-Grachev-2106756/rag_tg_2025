@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 from sqlalchemy import create_engine
 
-from src.data.parser import PyroSource
+# from src.data.parser import PyroSource
 
 
 load_dotenv()
@@ -14,7 +14,7 @@ API_ID = os.environ.get("TELEGRAM_API_ID")
 API_HASH = os.environ.get("TELEGRAM_API_HASH")
 CHANNEL_ID = os.environ.get("CHANNEL_ID")
 
-pyro_source = PyroSource(api_id=API_ID, api_hash=API_HASH)
+# pyro_source = PyroSource(api_id=API_ID, api_hash=API_HASH)
 
 # Sql
 DB_USER = os.getenv("DB_USER")
@@ -43,3 +43,7 @@ qdrant_client = QdrantClient(url=QDRANT_URL)
 # LLM
 LLM_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 LLM = "qwen/qwen3-next-80b-a3b-instruct"
+
+# Chat settings
+CHAT_HISTORY_LENGTH = 5
+ENABLE_QUESTION_ENRICHMENT = True
